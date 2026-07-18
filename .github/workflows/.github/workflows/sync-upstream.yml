@@ -1,0 +1,57 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每周一 00:00 UTC 自动检查
+    - cron: "0 0 * * 1"
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream and create PR
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 添加上游仓库
+          git remote add upstream https://github.com/cmliu/edgetunnel.git
+          git fetch upstream
+
+          # 检查 _worker.js 是否有变更
+          git checkout upstream/main -- _worker.js
+
+          if git diff --quiet -- _worker.js; then
+            echo "no_changes=true" >> $GITHUB_ENV
+            echo "无更新，跳过"
+          else
+            echo "no_changes=false" >> $GITHUB_ENV
+
+            # 创建新分支并提交
+            BRANCH="sync/upstream-$(date +%Y%m%d)"
+            git checkout -b $BRANCH
+            git add _worker.js
+            git commit -m "sync: 同步上游 _worker.js ($(date +%Y-%m-%d))"
+            git push origin $BRANCH
+
+            echo "branch=$BRANCH" >> $GITHUB_ENV
+          fi
+
+      - name: Create Pull Request
+        if: env.no_changes == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "sync: 上游更新同步 (${{ env.branch }})"
+          body: |
+            自动检测到上游 [cmliu/edgetunnel](https://github.com/cmliu/edgetunnel) 有新的 `_worker.js` 更新。
+
+            请人工审核后 Merge，Merge 后 Cloudflare 会自动部署。
+          branch: ${{ env.branch }}
+          base: main
+          delete-branch: true
